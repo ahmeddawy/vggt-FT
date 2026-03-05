@@ -24,7 +24,7 @@ data:
       patch_size: ${patch_size}
       debug: False
       repeat_batch: False
-      img_nums: [2, 4]
+      img_nums: [4, 4]
       augs:
         aspects: [1.0, 1.0]
     dataset:
@@ -32,8 +32,8 @@ data:
       dataset_configs:
         - _target_: data.datasets.gcs_colmap.GCSColmapDataset
           split: train
-          DATASET_DIR: /home/oem/Rembrand/Foundation_MC_finetune/vggt/dataset
-          split_list_dir: /home/oem/Rembrand/Foundation_MC_finetune/vggt/dataset/splits_gcs
+          DATASET_DIR: /mnt/bucket/dawy/vggt_finetune/dataset
+          split_list_dir: /mnt/bucket/dawy/vggt_finetune/dataset/splits_gcs
           min_num_images: 24
           len_train: 100000
           auto_convert_npz_to_npy: False
@@ -54,8 +54,8 @@ data:
       dataset_configs:
         - _target_: data.datasets.gcs_colmap.GCSColmapDataset
           split: test
-          DATASET_DIR: /home/oem/Rembrand/Foundation_MC_finetune/vggt/dataset
-          split_list_dir: /home/oem/Rembrand/Foundation_MC_finetune/vggt/dataset/splits_gcs
+          DATASET_DIR: /mnt/bucket/dawy/vggt_finetune/dataset
+          split_list_dir: /mnt/bucket/dawy/vggt_finetune/dataset/splits_gcs
           min_num_images: 24
           len_test: 2
           auto_convert_npz_to_npy: False
@@ -95,7 +95,7 @@ logging:
 checkpoint:
   save_dir: logs/${exp_name}/ckpts
   save_freq: 5
-  resume_checkpoint_path: /home/oem/Rembrand/Foundation_MC_finetune/vggt-FT/model.pt
+  resume_checkpoint_path: /workspace/vggt-FT/model.pt
   strict: False
 
 loss:
