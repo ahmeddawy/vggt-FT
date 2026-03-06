@@ -9,7 +9,7 @@ seed_value: 42
 accum_steps: 2
 patch_size: 14
 val_epoch_freq: 5
-max_img_per_gpu: 8
+max_img_per_gpu: 48
 
 limit_train_batches: 800
 limit_val_batches: 400
@@ -24,9 +24,6 @@ data:
       patch_size: ${patch_size}
       debug: False
       repeat_batch: False
-      img_nums: [4, 4]
-      augs:
-        aspects: [1.0, 1.0]
     dataset:
       _target_: data.composed_dataset.ComposedDataset
       dataset_configs:
@@ -46,9 +43,6 @@ data:
       img_size: ${img_size}
       patch_size: ${patch_size}
       debug: False
-      img_nums: [2, 4]
-      augs:
-        aspects: [1.0, 1.0]
     dataset:
       _target_: data.composed_dataset.ComposedDataset
       dataset_configs:
@@ -57,7 +51,7 @@ data:
           DATASET_DIR: /mnt/bucket/dawy/vggt_finetune/dataset
           split_list_dir: /mnt/bucket/dawy/vggt_finetune/dataset/splits_gcs
           min_num_images: 24
-          len_test: 2
+          len_test: 10000
           auto_convert_npz_to_npy: False
 
 logging:
@@ -81,6 +75,9 @@ logging:
         - loss_conf_depth
         - loss_reg_depth
         - loss_grad_depth
+        - loss_conf_point
+        - loss_reg_point
+        - loss_grad_point
     val:
       keys_to_log:
         - loss_objective
@@ -91,6 +88,9 @@ logging:
         - loss_conf_depth
         - loss_reg_depth
         - loss_grad_depth
+        - loss_conf_point
+        - loss_reg_point
+        - loss_grad_point
 
 checkpoint:
   save_dir: logs/${exp_name}/ckpts
@@ -107,7 +107,10 @@ loss:
     weight: 1.0
     gradient_loss_fn: "grad"
     valid_range: 0.98
-  point: null
+  point:
+    weight: 1.0
+    gradient_loss_fn: "normal"
+    valid_range: 0.98
   track: null
 
 optim:
@@ -133,6 +136,9 @@ optim:
       - module_name: ["camera"]
         max_norm: 1.0
         norm_type: 2
+      - module_name: ["point"]
+        max_norm: 1.0
+        norm_type: 2
   options:
     lr:
       - scheduler:
@@ -151,13 +157,13 @@ optim:
           _target_: fvcore.common.param_scheduler.ConstantParamScheduler
           value: 0.05
 
-max_epochs: 20
+max_epochs: 50
 
 model:
   _target_: vggt.models.vggt.VGGT
   enable_camera: True
   enable_depth: True
-  enable_point: False
+  enable_point: True
   enable_track: False
 
 distributed:
