@@ -453,7 +453,7 @@ class Trainer:
         )
 
         for data_iter, batch in enumerate(val_loader):
-            if data_iter > limit_val_batches:
+            if data_iter >= limit_val_batches:
                 break
             
             # measure data loading time
@@ -544,7 +544,7 @@ class Trainer:
             self.gradient_clipper.setup_clipping(self.model)
 
         for data_iter, batch in enumerate(train_loader):
-            if data_iter > limit_train_batches:
+            if data_iter >= limit_train_batches:
                 break
             
             # measure data loading time
@@ -849,9 +849,10 @@ def get_chunk_from_data(data: Any, chunk_id: int, num_chunks: int) -> Any:
     """
     if isinstance(data, torch.Tensor) or is_sequence_of_primitives(data):
         # either a tensor or a list of primitive objects
-        # assert len(data) % num_chunks == 0
-        start = (len(data) // num_chunks) * chunk_id
-        end = (len(data) // num_chunks) * (chunk_id + 1)
+        # Use proportional boundaries so all elements are covered exactly once,
+        # even when len(data) is not divisible by num_chunks.
+        start = (len(data) * chunk_id) // num_chunks
+        end = (len(data) * (chunk_id + 1)) // num_chunks
         return data[start:end]
     elif isinstance(data, Mapping):
         return {
@@ -865,4 +866,3 @@ def get_chunk_from_data(data: Any, chunk_id: int, num_chunks: int) -> Any:
         return [get_chunk_from_data(value, chunk_id, num_chunks) for value in data]
     else:
         return data
-
