@@ -56,7 +56,12 @@ class MultitaskLoss(torch.nn.Module):
         # Depth estimation loss - if depth maps are predicted
         if "depth" in predictions:
             depth_loss_dict = compute_depth_loss(predictions, batch, **self.depth)
-            depth_loss = depth_loss_dict["loss_conf_depth"] + depth_loss_dict["loss_reg_depth"] + depth_loss_dict["loss_grad_depth"]
+            depth_loss = (
+                depth_loss_dict["loss_conf_depth"]
+                + depth_loss_dict["loss_reg_depth"]
+                + depth_loss_dict["loss_grad_depth"]
+                + depth_loss_dict.get("loss_mask_conf_depth", 0.0)
+            )
             depth_loss = depth_loss * self.depth["weight"]
             total_loss = total_loss + depth_loss
             loss_dict.update(depth_loss_dict)
@@ -64,7 +69,12 @@ class MultitaskLoss(torch.nn.Module):
         # 3D point reconstruction loss - if world points are predicted
         if "world_points" in predictions:
             point_loss_dict = compute_point_loss(predictions, batch, **self.point)
-            point_loss = point_loss_dict["loss_conf_point"] + point_loss_dict["loss_reg_point"] + point_loss_dict["loss_grad_point"]
+            point_loss = (
+                point_loss_dict["loss_conf_point"]
+                + point_loss_dict["loss_reg_point"]
+                + point_loss_dict["loss_grad_point"]
+                + point_loss_dict.get("loss_mask_conf_point", 0.0)
+            )
             point_loss = point_loss * self.point["weight"]
             total_loss = total_loss + point_loss
             loss_dict.update(point_loss_dict)
@@ -208,6 +218,10 @@ def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
         gradient_loss_fn: Type of gradient loss to apply
         valid_range: Quantile range for outlier filtering
     """
+    invalid_conf_weight = float(kwargs.get("invalid_conf_weight", 0.0))
+    invalid_conf_target = float(kwargs.get("invalid_conf_target", 1.0))
+    invalid_conf_loss_type = kwargs.get("invalid_conf_loss_type", "l2")
+
     pred_points = predictions['world_points']
     pred_points_conf = predictions['world_points_conf']
     gt_points = batch['world_points']
@@ -215,12 +229,23 @@ def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
     
     gt_points = check_and_fix_inf_nan(gt_points, "gt_points")
     
+    loss_mask_conf = masked_conf_penalty(
+        conf=pred_points_conf,
+        valid_mask=gt_points_mask,
+        invalid_conf_weight=invalid_conf_weight,
+        invalid_conf_target=invalid_conf_target,
+        invalid_conf_loss_type=invalid_conf_loss_type,
+    )
+
     if gt_points_mask.sum() < 100:
         # If there are less than 100 valid points, skip this batch
         dummy_loss = (0.0 * pred_points).mean()
-        loss_dict = {f"loss_conf_point": dummy_loss,
-                    f"loss_reg_point": dummy_loss,
-                    f"loss_grad_point": dummy_loss,}
+        loss_dict = {
+            "loss_conf_point": dummy_loss,
+            "loss_reg_point": dummy_loss,
+            "loss_grad_point": dummy_loss,
+            "loss_mask_conf_point": loss_mask_conf,
+        }
         return loss_dict
     
     # Compute confidence-weighted regression loss with optional gradient loss
@@ -231,6 +256,7 @@ def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
         f"loss_conf_point": loss_conf,
         f"loss_reg_point": loss_reg,
         f"loss_grad_point": loss_grad,
+        f"loss_mask_conf_point": loss_mask_conf,
     }
     
     return loss_dict
@@ -248,6 +274,10 @@ def compute_depth_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
         gradient_loss_fn: Type of gradient loss to apply
         valid_range: Quantile range for outlier filtering
     """
+    invalid_conf_weight = float(kwargs.get("invalid_conf_weight", 0.0))
+    invalid_conf_target = float(kwargs.get("invalid_conf_target", 1.0))
+    invalid_conf_loss_type = kwargs.get("invalid_conf_loss_type", "l2")
+
     pred_depth = predictions['depth']
     pred_depth_conf = predictions['depth_conf']
 
@@ -256,12 +286,23 @@ def compute_depth_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
     gt_depth = gt_depth[..., None]              # (B, H, W, 1)
     gt_depth_mask = batch['point_masks'].clone()   # 3D points derived from depth map, so we use the same mask
 
+    loss_mask_conf = masked_conf_penalty(
+        conf=pred_depth_conf,
+        valid_mask=gt_depth_mask,
+        invalid_conf_weight=invalid_conf_weight,
+        invalid_conf_target=invalid_conf_target,
+        invalid_conf_loss_type=invalid_conf_loss_type,
+    )
+
     if gt_depth_mask.sum() < 100:
         # If there are less than 100 valid points, skip this batch
         dummy_loss = (0.0 * pred_depth).mean()
-        loss_dict = {f"loss_conf_depth": dummy_loss,
-                    f"loss_reg_depth": dummy_loss,
-                    f"loss_grad_depth": dummy_loss,}
+        loss_dict = {
+            "loss_conf_depth": dummy_loss,
+            "loss_reg_depth": dummy_loss,
+            "loss_grad_depth": dummy_loss,
+            "loss_mask_conf_depth": loss_mask_conf,
+        }
         return loss_dict
 
     # NOTE: we put conf inside regression_loss so that we can also apply conf loss to the gradient loss in a multi-scale manner
@@ -273,9 +314,46 @@ def compute_depth_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
         f"loss_conf_depth": loss_conf,
         f"loss_reg_depth": loss_reg,    
         f"loss_grad_depth": loss_grad,
+        f"loss_mask_conf_depth": loss_mask_conf,
     }
 
     return loss_dict
+
+
+def masked_conf_penalty(
+    conf,
+    valid_mask,
+    invalid_conf_weight=0.0,
+    invalid_conf_target=1.0,
+    invalid_conf_loss_type="l2",
+):
+    """
+    Penalize confidence on invalid pixels so masked/invalid regions are pushed to low confidence.
+
+    Args:
+        conf: (B, S, H, W) confidence map.
+        valid_mask: (B, S, H, W) bool mask for valid supervision pixels.
+        invalid_conf_weight: Weight of this penalty term.
+        invalid_conf_target: Target confidence value at invalid pixels (1.0 for expp1 activation).
+        invalid_conf_loss_type: "l2" or "l1".
+    """
+    if invalid_conf_weight <= 0:
+        return (conf * 0.0).mean()
+
+    invalid_mask = ~valid_mask.bool()
+    if invalid_mask.sum() == 0:
+        return (conf * 0.0).mean()
+
+    invalid_conf = conf[invalid_mask]
+    target = torch.full_like(invalid_conf, fill_value=invalid_conf_target)
+
+    if invalid_conf_loss_type == "l1":
+        penalty = (invalid_conf - target).abs().mean()
+    else:
+        penalty = ((invalid_conf - target) ** 2).mean()
+
+    penalty = check_and_fix_inf_nan(penalty, "loss_mask_conf")
+    return invalid_conf_weight * penalty
 
 
 def regression_loss(pred, gt, mask, conf=None, gradient_loss_fn=None, gamma=1.0, alpha=0.2, valid_range=-1):
@@ -805,5 +883,4 @@ def sequence_loss(flow_preds, flow_gt, vis, valids, gamma=0.8, vis_aware=False, 
 
     return flow_loss
 '''
-
 

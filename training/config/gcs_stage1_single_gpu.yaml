@@ -2,7 +2,7 @@ defaults:
   - default_dataset.yaml
   - _self_
 
-exp_name: gcs_stage1_single_gpu_imgnums_12_28_nodup
+exp_name: gcs_stage1_single_gpu_imgnums_12_28_nodup_lr1e4
 img_size: 518
 num_workers: 8
 seed_value: 42
@@ -85,9 +85,11 @@ logging:
         - loss_conf_depth
         - loss_reg_depth
         - loss_grad_depth
+        - loss_mask_conf_depth
         - loss_conf_point
         - loss_reg_point
         - loss_grad_point
+        - loss_mask_conf_point
     val:
       keys_to_log:
         - loss_objective
@@ -98,9 +100,11 @@ logging:
         - loss_conf_depth
         - loss_reg_depth
         - loss_grad_depth
+        - loss_mask_conf_depth
         - loss_conf_point
         - loss_reg_point
         - loss_grad_point
+        - loss_mask_conf_point
 
 checkpoint:
   save_dir: ${logging.log_dir}/${exp_name}/ckpts
@@ -117,17 +121,23 @@ loss:
     weight: 1.0
     gradient_loss_fn: "grad"
     valid_range: 0.98
+    invalid_conf_weight: 0.05
+    invalid_conf_target: 1.0
+    invalid_conf_loss_type: "l2"
   point:
     weight: 1.0
     gradient_loss_fn: "normal"
     valid_range: 0.98
+    invalid_conf_weight: 0.05
+    invalid_conf_target: 1.0
+    invalid_conf_loss_type: "l2"
   track: null
 
 optim:
   param_group_modifiers: False
   optimizer:
     _target_: torch.optim.AdamW
-    lr: 5e-5
+    lr: 1e-4
     weight_decay: 0.05
   frozen_module_names:
     - "*aggregator*"
@@ -156,10 +166,10 @@ optim:
           schedulers:
             - _target_: fvcore.common.param_scheduler.LinearParamScheduler
               start_value: 1e-8
-              end_value: 5e-5
+              end_value: 1e-4
             - _target_: fvcore.common.param_scheduler.CosineParamScheduler
-              start_value: 5e-5
-              end_value: 1e-8
+              start_value: 1e-4
+              end_value: 1e-6
           lengths: [0.05, 0.95]
           interval_scaling: ['rescaled', 'rescaled']
     weight_decay:
