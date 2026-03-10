@@ -65,7 +65,7 @@ data:
           auto_convert_npz_to_npy: False
 
 logging:
-  log_dir: logs
+  log_dir: finetuning_logs_masked
   log_visuals: False
   log_freq: 1
   log_level_primary: DEBUG
@@ -73,7 +73,7 @@ logging:
   all_ranks: False
   tensorboard_writer:
     _target_: train_utils.tb_writer.TensorBoardLogger
-    path: ${logging.log_dir}/tensorboard
+    path: ${logging.log_dir}/${exp_name}/tensorboard
   scalar_keys_to_log:
     train:
       keys_to_log:
@@ -103,7 +103,7 @@ logging:
         - loss_grad_point
 
 checkpoint:
-  save_dir: logs/${exp_name}/ckpts
+  save_dir: ${logging.log_dir}/${exp_name}/ckpts
   save_freq: 5
   resume_checkpoint_path: /workspace/vggt-FT/model.pt
   strict: False
