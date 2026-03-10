@@ -41,7 +41,7 @@ class GCSColmapDataset(BaseDataset):
         images/frame_XXXXXX.jpg
         colmap/cameras.txt
         colmap/images.txt
-        depth/depths.npy OR depth/*_depths.npz
+        <depth_dir_name>/depths.npy OR <depth_dir_name>/*_depths.npz
     """
 
     FRAME_RE = re.compile(r"frame_(\d+)")
@@ -58,6 +58,7 @@ class GCSColmapDataset(BaseDataset):
         len_train: int = 100000,
         len_test: int = 10000,
         depth_key: str = "depths",
+        depth_dir_name: str = "depth",
         depth_min_percentile: float = -1,
         depth_max_percentile: float = 99,
         depth_max: float = -1,
@@ -91,6 +92,7 @@ class GCSColmapDataset(BaseDataset):
 
         self.min_num_images = min_num_images
         self.depth_key = depth_key
+        self.depth_dir_name = depth_dir_name
         self.depth_min_percentile = depth_min_percentile
         self.depth_max_percentile = depth_max_percentile
         self.depth_max = depth_max
@@ -125,7 +127,7 @@ class GCSColmapDataset(BaseDataset):
         if self.sequence_list_len == 0:
             raise RuntimeError(
                 f"No valid sequences found in {self.dataset_dir}. "
-                "Check colmap/depth files and split lists."
+                f"Check colmap/{self.depth_dir_name} files and split lists."
             )
 
         if self.debug:
@@ -164,7 +166,7 @@ class GCSColmapDataset(BaseDataset):
                 osp.isfile(osp.join(seq_dir, "colmap", "images.txt"))
                 and osp.isfile(osp.join(seq_dir, "colmap", "cameras.txt"))
                 and osp.isdir(osp.join(seq_dir, "images"))
-                and osp.isdir(osp.join(seq_dir, "depth"))
+                and osp.isdir(osp.join(seq_dir, self.depth_dir_name))
             ):
                 candidates.append(name)
         return candidates
@@ -177,7 +179,9 @@ class GCSColmapDataset(BaseDataset):
         depth_path = self._resolve_depth_path(seq_name, seq_dir)
 
         if depth_path is None:
-            logging.warning(f"[{seq_name}] No supported depth file found under depth/. Skipping.")
+            logging.warning(
+                f"[{seq_name}] No supported depth file found under {self.depth_dir_name}/. Skipping."
+            )
             return None
 
         camera_map = self._parse_colmap_cameras(colmap_cameras_path)
@@ -226,7 +230,9 @@ class GCSColmapDataset(BaseDataset):
         return frames, depth_path
 
     def _resolve_depth_path(self, seq_name: str, seq_dir: str) -> Optional[str]:
-        depth_dir = osp.join(seq_dir, "depth")
+        depth_dir = osp.join(seq_dir, self.depth_dir_name)
+        if not osp.isdir(depth_dir):
+            return None
         npy_candidates = [
             osp.join(depth_dir, "depths.npy"),
             osp.join(depth_dir, f"{seq_name}_depths.npy"),
