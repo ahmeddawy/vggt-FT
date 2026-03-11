@@ -9,6 +9,7 @@ import numpy as np
 import glob
 import os
 import copy
+import re
 import torch
 import torch.nn.functional as F
 
@@ -21,6 +22,7 @@ import argparse
 from pathlib import Path
 import trimesh
 import pycolmap
+from PIL import Image
 
 
 from vggt.models.vggt import VGGT
@@ -42,7 +44,19 @@ from vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pycolmap, batch_np
 def parse_args():
     parser = argparse.ArgumentParser(description="VGGT Demo")
     parser.add_argument("--scene_dir", type=str, required=True, help="Directory containing the scene images")
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default=None,
+        help="Directory to save outputs (defaults to <scene_dir>/sparse)",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default="/mnt/bucket/dawy/vggt_finetune/checkpoint_5.pt",
+        help="Path to model checkpoint (.pt).",
+    )
     parser.add_argument("--use_ba", action="store_true", default=False, help="Use BA for reconstruction")
     ######### BA parameters #########
     parser.add_argument(
@@ -59,7 +73,114 @@ def parse_args():
     parser.add_argument(
         "--conf_thres_value", type=float, default=5.0, help="Confidence threshold value for depth filtering (wo BA)"
     )
+    parser.add_argument(
+        "--masks_dir",
+        type=str,
+        default=None,
+        help="Optional mask directory. If not set, tries <scene_dir>/masks.",
+    )
+    parser.add_argument(
+        "--ignore_masks",
+        action="store_true",
+        default=False,
+        help="Disable mask-based confidence suppression even if masks exist.",
+    )
+    parser.add_argument(
+        "--mask_background_value",
+        type=int,
+        default=0,
+        help="Mask pixel value treated as background/valid region (kept).",
+    )
+    parser.add_argument(
+        "--mask_conf_suppressed_value",
+        type=float,
+        default=1.0,
+        help="Confidence value assigned to masked-out pixels (for expp1 confidence, 1.0 is minimum).",
+    )
     return parser.parse_args()
+
+
+def _extract_frame_index(image_name: str):
+    stem = Path(image_name).stem
+    # Matches names like frame_000123 or 000123
+    m = re.search(r"(\d+)$", stem)
+    if m is None:
+        return None
+    return int(m.group(1))
+
+
+def _resolve_mask_path(image_name: str, masks_dir: Path, fallback_idx: int):
+    stem = Path(image_name).stem
+    frame_idx = _extract_frame_index(image_name)
+
+    candidates = [masks_dir / f"{stem}.png"]
+    if frame_idx is not None:
+        candidates.append(masks_dir / f"{frame_idx:05d}.png")
+        candidates.append(masks_dir / f"{frame_idx:06d}.png")
+    candidates.append(masks_dir / f"{fallback_idx:05d}.png")
+    candidates.append(masks_dir / f"{fallback_idx:06d}.png")
+
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def _load_keep_mask_square(mask_path: Path, target_size: int, mask_background_value: int):
+    """Load semantic/binary mask and convert to square target_size keep-mask.
+
+    Returns:
+        np.ndarray[bool]: shape (target_size, target_size), True for kept pixels.
+    """
+    mask = np.array(Image.open(mask_path))
+    if mask.ndim == 3:
+        mask = mask[..., 0]
+    keep = (mask == mask_background_value).astype(np.uint8)
+
+    h, w = keep.shape
+    max_dim = max(h, w)
+    top = (max_dim - h) // 2
+    left = (max_dim - w) // 2
+    square_keep = np.zeros((max_dim, max_dim), dtype=np.uint8)  # padded area is suppressed
+    square_keep[top : top + h, left : left + w] = keep
+
+    keep_img = Image.fromarray(square_keep * 255, mode="L")
+    keep_img = keep_img.resize((target_size, target_size), resample=Image.NEAREST)
+    keep_square = np.array(keep_img) > 127
+    return keep_square
+
+
+def build_keep_masks_for_scene(
+    image_paths,
+    masks_dir: Path,
+    target_size: int,
+    mask_background_value: int,
+):
+    keep_masks = []
+    found = 0
+    missing = 0
+
+    for i, image_path in enumerate(image_paths):
+        mask_path = _resolve_mask_path(image_path, masks_dir, fallback_idx=i)
+        if mask_path is None:
+            keep_masks.append(np.ones((target_size, target_size), dtype=bool))
+            missing += 1
+            continue
+        keep_masks.append(
+            _load_keep_mask_square(mask_path, target_size=target_size, mask_background_value=mask_background_value)
+        )
+        found += 1
+
+    keep_masks = np.stack(keep_masks, axis=0)  # [S, H, W]
+    return keep_masks, found, missing
+
+
+def suppress_conf_with_keep_masks(conf_map, keep_masks, suppressed_value):
+    conf_map = np.array(conf_map, copy=True)
+    if conf_map.shape != keep_masks.shape:
+        raise ValueError(f"Conf/mask shape mismatch: {conf_map.shape} vs {keep_masks.shape}")
+    conf_map[~keep_masks] = suppressed_value
+    return conf_map
 
 
 def run_VGGT(model, images, dtype, resolution=518):
@@ -111,15 +232,19 @@ def demo_fn(args):
 
     # Run VGGT for camera and depth estimation
     model = VGGT()
-    _URL = "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
-    model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
+    ckpt_path = Path(args.checkpoint)
+    if not ckpt_path.is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+    ckpt = torch.load(str(ckpt_path), map_location="cpu")
+    state = ckpt["model"] if "model" in ckpt else ckpt
+    model.load_state_dict(state, strict=False)
     model.eval()
     model = model.to(device)
-    print(f"Model loaded")
+    print(f"Model loaded from {ckpt_path}")
 
     # Get image paths and preprocess them
     image_dir = os.path.join(args.scene_dir, "images")
-    image_path_list = glob.glob(os.path.join(image_dir, "*"))
+    image_path_list = sorted(glob.glob(os.path.join(image_dir, "*")))
     if len(image_path_list) == 0:
         raise ValueError(f"No images found in {image_dir}")
     base_image_path_list = [os.path.basename(path) for path in image_path_list]
@@ -134,9 +259,32 @@ def demo_fn(args):
     original_coords = original_coords.to(device)
     print(f"Loaded {len(images)} images from {image_dir}")
 
-    # Run VGGT to estimate camera and depth
-    # Run with 518x518 images
+    # Optional scene masks (semantic/binary) to suppress confidence on masked regions.
+    keep_masks = None
+    if not args.ignore_masks:
+        masks_dir = Path(args.masks_dir) if args.masks_dir else Path(args.scene_dir) / "masks"
+        if masks_dir.is_dir():
+            keep_masks, found_mask_count, missing_mask_count = build_keep_masks_for_scene(
+                image_path_list,
+                masks_dir,
+                target_size=vggt_fixed_resolution,
+                mask_background_value=args.mask_background_value,
+            )
+            print(
+                f"Using masks from {masks_dir} | found={found_mask_count}, missing={missing_mask_count}, "
+                f"target_size={vggt_fixed_resolution}"
+            )
+        else:
+            print(f"No masks directory found at {masks_dir}; continuing without masks.")
+
+    # Run VGGT to estimate camera and depth (with 518x518 inference resolution).
     extrinsic, intrinsic, depth_map, depth_conf = run_VGGT(model, images, dtype, vggt_fixed_resolution)
+    if keep_masks is not None:
+        depth_conf = suppress_conf_with_keep_masks(
+            depth_conf,
+            keep_masks,
+            suppressed_value=args.mask_conf_suppressed_value,
+        )
     points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
 
     if args.use_ba:
@@ -240,13 +388,13 @@ def demo_fn(args):
         shared_camera=shared_camera,
     )
 
-    print(f"Saving reconstruction to {args.scene_dir}/sparse")
-    sparse_reconstruction_dir = os.path.join(args.scene_dir, "sparse")
+    sparse_reconstruction_dir = args.output_dir if args.output_dir is not None else os.path.join(args.scene_dir, "sparse")
+    print(f"Saving reconstruction to {sparse_reconstruction_dir}")
     os.makedirs(sparse_reconstruction_dir, exist_ok=True)
     reconstruction.write(sparse_reconstruction_dir)
 
     # Save point cloud for fast visualization
-    trimesh.PointCloud(points_3d, colors=points_rgb).export(os.path.join(args.scene_dir, "sparse/points.ply"))
+    trimesh.PointCloud(points_3d, colors=points_rgb).export(os.path.join(sparse_reconstruction_dir, "points.ply"))
 
     return True
 
