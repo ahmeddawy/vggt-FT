@@ -1,0 +1,24 @@
+defaults:
+  - gcs_stage1_single_gpu
+  - _self_
+
+# Experiment: freeze pretrained aggregator, train randomly initialized heads.
+# Use with an aggregator-only checkpoint produced by:
+#   python training/prepare_aggregator_only_checkpoint.py \
+#     --input /workspace/vggt-FT/model.pt \
+#     --output /workspace/vggt-FT/checkpoints/model_aggregator_only.pt
+exp_name: gcs_stage1_single_gpu_frozen_agg_random_heads
+
+checkpoint:
+  save_dir: ${logging.log_dir}/${exp_name}/ckpts
+  save_freq: 5
+  # Override on CLI if needed:
+  #   --config gcs_stage1_single_gpu_frozen_agg_random_heads
+  #   +checkpoint.resume_checkpoint_path=/your/path/model_aggregator_only.pt
+  resume_checkpoint_path: /home/oem/Rembrand/Foundation_MC_finetune/vggt-FT/checkpoints/model_aggregator_only.pt
+  strict: False
+
+optim:
+  # Keep aggregator frozen for the entire run.
+  frozen_module_names:
+    - "*aggregator*"
