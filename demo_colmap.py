@@ -10,6 +10,7 @@ import glob
 import os
 import copy
 import re
+import json
 import torch
 import torch.nn.functional as F
 
@@ -97,6 +98,18 @@ def parse_args():
         default=1.0,
         help="Confidence value assigned to masked-out pixels (for expp1 confidence, 1.0 is minimum).",
     )
+    parser.add_argument(
+        "--disable_mask_conf_suppression",
+        action="store_true",
+        default=False,
+        help="If set, masks are used only for diagnostics; confidence is not externally suppressed.",
+    )
+    parser.add_argument(
+        "--save_conf_mask_report",
+        action="store_true",
+        default=False,
+        help="Save conf-mask diagnostics JSON to <output_dir>/conf_mask_report.json.",
+    )
     return parser.parse_args()
 
 
@@ -183,6 +196,43 @@ def suppress_conf_with_keep_masks(conf_map, keep_masks, suppressed_value):
     return conf_map
 
 
+def compute_conf_mask_stats(conf_map, keep_masks, conf_threshold):
+    if conf_map.shape != keep_masks.shape:
+        raise ValueError(f"Conf/mask shape mismatch: {conf_map.shape} vs {keep_masks.shape}")
+
+    valid_mask = keep_masks.astype(bool)
+    masked_mask = ~valid_mask
+
+    valid_vals = conf_map[valid_mask]
+    masked_vals = conf_map[masked_mask]
+
+    def _mean_or_nan(arr):
+        return float(arr.mean()) if arr.size > 0 else float("nan")
+
+    def _rate_or_nan(arr, thres):
+        return float((arr >= thres).mean()) if arr.size > 0 else float("nan")
+
+    return {
+        "conf_threshold": float(conf_threshold),
+        "valid_count": int(valid_vals.size),
+        "masked_count": int(masked_vals.size),
+        "valid_mean": _mean_or_nan(valid_vals),
+        "masked_mean": _mean_or_nan(masked_vals),
+        "valid_p50": float(np.percentile(valid_vals, 50)) if valid_vals.size > 0 else float("nan"),
+        "masked_p50": float(np.percentile(masked_vals, 50)) if masked_vals.size > 0 else float("nan"),
+        "valid_keep_rate": _rate_or_nan(valid_vals, conf_threshold),
+        "masked_keep_rate": _rate_or_nan(masked_vals, conf_threshold),
+    }
+
+
+def print_conf_mask_stats(tag, stats):
+    print(
+        f"[{tag}] conf-thr={stats['conf_threshold']:.3f} | "
+        f"valid(mean={stats['valid_mean']:.4f}, p50={stats['valid_p50']:.4f}, keep={stats['valid_keep_rate']:.4f}, n={stats['valid_count']}) | "
+        f"masked(mean={stats['masked_mean']:.4f}, p50={stats['masked_p50']:.4f}, keep={stats['masked_keep_rate']:.4f}, n={stats['masked_count']})"
+    )
+
+
 def run_VGGT(model, images, dtype, resolution=518):
     # images: [B, 3, H, W]
 
@@ -214,6 +264,7 @@ def run_VGGT(model, images, dtype, resolution=518):
 def demo_fn(args):
     # Print configuration
     print("Arguments:", vars(args))
+    sparse_reconstruction_dir = args.output_dir if args.output_dir is not None else os.path.join(args.scene_dir, "sparse")
 
     # Set seed for reproducibility
     np.random.seed(args.seed)
@@ -279,12 +330,33 @@ def demo_fn(args):
 
     # Run VGGT to estimate camera and depth (with 518x518 inference resolution).
     extrinsic, intrinsic, depth_map, depth_conf = run_VGGT(model, images, dtype, vggt_fixed_resolution)
+
+    conf_mask_report = None
     if keep_masks is not None:
-        depth_conf = suppress_conf_with_keep_masks(
-            depth_conf,
-            keep_masks,
-            suppressed_value=args.mask_conf_suppressed_value,
-        )
+        raw_stats = compute_conf_mask_stats(depth_conf, keep_masks, args.conf_thres_value)
+        print_conf_mask_stats("raw_conf", raw_stats)
+
+        conf_mask_report = {
+            "scene_dir": str(args.scene_dir),
+            "checkpoint": str(args.checkpoint),
+            "conf_threshold": float(args.conf_thres_value),
+            "suppression_applied": not args.disable_mask_conf_suppression,
+            "mask_conf_suppressed_value": float(args.mask_conf_suppressed_value),
+            "raw": raw_stats,
+            "post": None,
+        }
+
+        if args.disable_mask_conf_suppression:
+            print("Mask confidence suppression is disabled; using raw model confidence.")
+        else:
+            depth_conf = suppress_conf_with_keep_masks(
+                depth_conf,
+                keep_masks,
+                suppressed_value=args.mask_conf_suppressed_value,
+            )
+            post_stats = compute_conf_mask_stats(depth_conf, keep_masks, args.conf_thres_value)
+            print_conf_mask_stats("post_masked_conf", post_stats)
+            conf_mask_report["post"] = post_stats
     points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
 
     if args.use_ba:
@@ -388,10 +460,15 @@ def demo_fn(args):
         shared_camera=shared_camera,
     )
 
-    sparse_reconstruction_dir = args.output_dir if args.output_dir is not None else os.path.join(args.scene_dir, "sparse")
     print(f"Saving reconstruction to {sparse_reconstruction_dir}")
     os.makedirs(sparse_reconstruction_dir, exist_ok=True)
     reconstruction.write(sparse_reconstruction_dir)
+
+    if args.save_conf_mask_report and conf_mask_report is not None:
+        report_path = os.path.join(sparse_reconstruction_dir, "conf_mask_report.json")
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(conf_mask_report, f, indent=2)
+        print(f"Saved confidence mask report to {report_path}")
 
     # Save point cloud for fast visualization
     trimesh.PointCloud(points_3d, colors=points_rgb).export(os.path.join(sparse_reconstruction_dir, "points.ply"))

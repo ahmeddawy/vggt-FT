@@ -13,6 +13,11 @@ USE_MASKS=1
 MASKS_SUBDIR="${MASKS_SUBDIR:-masks}"
 MASK_BACKGROUND_VALUE=0
 MASK_CONF_SUPPRESSED_VALUE=1.0
+SAVE_CONF_MASK_REPORT="${SAVE_CONF_MASK_REPORT:-1}"
+RUN_FORCED_MASK_CONF="${RUN_FORCED_MASK_CONF:-1}"
+RUN_LEARNED_CONF_ONLY="${RUN_LEARNED_CONF_ONLY:-1}"
+FORCED_EXP_NAME="${FORCED_EXP_NAME:-forced_mask_conf}"
+LEARNED_EXP_NAME="${LEARNED_EXP_NAME:-learned_conf_only}"
 
 SEQUENCES=(
     "crqol8dkbpscqjzweb88cucu_122"
@@ -38,12 +43,75 @@ SEQUENCES=(
 
 TOTAL=${#SEQUENCES[@]}
 FAILED=()
+EXP_COUNT=0
+if [[ "$RUN_FORCED_MASK_CONF" == "1" ]]; then
+    EXP_COUNT=$((EXP_COUNT + 1))
+fi
+if [[ "$RUN_LEARNED_CONF_ONLY" == "1" ]]; then
+    EXP_COUNT=$((EXP_COUNT + 1))
+fi
+if [[ "$EXP_COUNT" -eq 0 ]]; then
+    echo "Nothing to run: set RUN_FORCED_MASK_CONF=1 and/or RUN_LEARNED_CONF_ONLY=1"
+    exit 1
+fi
+TOTAL_JOBS=$((TOTAL * EXP_COUNT))
+JOB_IDX=0
+
 echo "Running demo_colmap.py on $TOTAL training sequences"
+echo "Total jobs: $TOTAL_JOBS ($EXP_COUNT experiments per sequence)"
 echo "Output base: $OUTPUT_BASE"
 echo "Checkpoint: $CKPT_PATH"
 echo "Masks subdir: $MASKS_SUBDIR"
 echo "Use masks: $USE_MASKS (background=${MASK_BACKGROUND_VALUE}, conf_suppressed=${MASK_CONF_SUPPRESSED_VALUE})"
+echo "Experiments: forced=$RUN_FORCED_MASK_CONF (${FORCED_EXP_NAME}), learned_only=$RUN_LEARNED_CONF_ONLY (${LEARNED_EXP_NAME})"
+echo "Save conf report: $SAVE_CONF_MASK_REPORT"
 echo "---"
+
+run_experiment() {
+    local exp_name="$1"
+    local disable_mask_suppression="$2"  # 0 or 1
+    local out_dir="$OUTPUT_BASE/$exp_name/$SEQ/sparse"
+
+    JOB_IDX=$((JOB_IDX + 1))
+    mkdir -p "$out_dir"
+
+    local -a cmd=(
+        python demo_colmap.py
+        --scene_dir "$SCENE_DIR"
+        --output_dir "$out_dir"
+        --seed "$SEED"
+        --checkpoint "$CKPT_PATH"
+        --conf_thres_value "$CONF_THRES"
+    )
+
+    if [[ "$SAVE_CONF_MASK_REPORT" == "1" ]]; then
+        cmd+=(--save_conf_mask_report)
+    fi
+
+    if [[ "$USE_MASKS" == "1" ]]; then
+        if [[ -n "$MASKS_DIR" ]]; then
+            cmd+=(
+                --masks_dir "$MASKS_DIR"
+                --mask_background_value "$MASK_BACKGROUND_VALUE"
+                --mask_conf_suppressed_value "$MASK_CONF_SUPPRESSED_VALUE"
+            )
+        else
+            echo "[$NUM/$TOTAL][$exp_name] Masks: not found for $SEQ, running without masks."
+        fi
+    fi
+
+    if [[ "$disable_mask_suppression" == "1" ]]; then
+        cmd+=(--disable_mask_conf_suppression)
+    fi
+
+    echo "[job $JOB_IDX/$TOTAL_JOBS][$NUM/$TOTAL][$exp_name] OUT: $out_dir"
+    if "${cmd[@]}"; then
+        echo "[job $JOB_IDX/$TOTAL_JOBS][$NUM/$TOTAL][$exp_name] Done: $SEQ"
+    else
+        echo "[job $JOB_IDX/$TOTAL_JOBS][$NUM/$TOTAL][$exp_name] FAILED: $SEQ"
+        FAILED+=("${SEQ}:${exp_name}")
+    fi
+}
 
 for i in "${!SEQUENCES[@]}"; do
     SEQ="${SEQUENCES[$i]}"
@@ -59,37 +127,23 @@ for i in "${!SEQUENCES[@]}"; do
     elif [[ -d "$SCENE_DIR/mask" ]]; then
         MASKS_DIR="$SCENE_DIR/mask"
     fi
-    OUT_DIR="$OUTPUT_BASE/$SEQ/sparse"
-    mkdir -p "$OUT_DIR"
-
-    CMD=(
-        python demo_colmap.py
-        --scene_dir "$SCENE_DIR"
-        --output_dir "$OUT_DIR"
-        --seed "$SEED"
-        --checkpoint "$CKPT_PATH"
-        --conf_thres_value "$CONF_THRES"
-    )
 
     if [[ "$USE_MASKS" == "1" ]]; then
         if [[ -n "$MASKS_DIR" ]]; then
-            CMD+=(
-                --masks_dir "$MASKS_DIR"
-                --mask_background_value "$MASK_BACKGROUND_VALUE"
-                --mask_conf_suppressed_value "$MASK_CONF_SUPPRESSED_VALUE"
-            )
             echo "[$NUM/$TOTAL] Masks: enabled ($MASKS_DIR)"
         else
             echo "[$NUM/$TOTAL] Masks: not found for $SEQ, running without masks."
         fi
     fi
 
-    if "${CMD[@]}"; then
-        echo "[$NUM/$TOTAL] Done: $SEQ"
-    else
-        echo "[$NUM/$TOTAL] FAILED: $SEQ"
-        FAILED+=("$SEQ")
+    if [[ "$RUN_FORCED_MASK_CONF" == "1" ]]; then
+        run_experiment "$FORCED_EXP_NAME" 0
     fi
+
+    if [[ "$RUN_LEARNED_CONF_ONLY" == "1" ]]; then
+        run_experiment "$LEARNED_EXP_NAME" 1
+    fi
+
     echo "---"
 done
 
