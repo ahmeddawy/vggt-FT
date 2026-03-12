@@ -1,0 +1,58 @@
+defaults:
+  - gcs_stage1_single_gpu_frozen_agg_random_heads
+  - _self_
+
+# 8-GPU throughput-oriented variant for frozen-aggregator/random-heads ablation.
+exp_name: gcs_stage1_frozen_agg_random_heads_8gpu_fast_lr8e4
+
+val_epoch_freq: 10
+limit_val_batches: 200
+
+data:
+  train:
+    dataset:
+      dataset_configs:
+        - _target_: data.datasets.gcs_colmap.GCSColmapDataset
+          split: train
+          DATASET_DIR: /home/oem/Rembrand/Foundation_MC_finetune/vggt-FT/dataset
+          split_list_dir: /home/oem/Rembrand/Foundation_MC_finetune/vggt-FT/dataset/splits
+          depth_dir_name: masked_depth
+          min_num_images: 24
+          len_train: 100000
+          auto_convert_npz_to_npy: False
+  val:
+    dataset:
+      dataset_configs:
+        - _target_: data.datasets.gcs_colmap.GCSColmapDataset
+          split: test
+          DATASET_DIR: /home/oem/Rembrand/Foundation_MC_finetune/vggt-FT/dataset
+          split_list_dir: /home/oem/Rembrand/Foundation_MC_finetune/vggt-FT/dataset/splits
+          depth_dir_name: masked_depth
+          min_num_images: 24
+          len_test: 10000
+          auto_convert_npz_to_npy: False
+
+logging:
+  log_freq: 10
+
+checkpoint:
+  save_freq: 10
+
+optim:
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 8e-4
+    weight_decay: 0.05
+  options:
+    lr:
+      - scheduler:
+          _target_: fvcore.common.param_scheduler.CompositeParamScheduler
+          schedulers:
+            - _target_: fvcore.common.param_scheduler.LinearParamScheduler
+              start_value: 1e-8
+              end_value: 8e-4
+            - _target_: fvcore.common.param_scheduler.CosineParamScheduler
+              start_value: 8e-4
+              end_value: 1e-6
+          lengths: [0.05, 0.95]
+          interval_scaling: ['rescaled', 'rescaled']

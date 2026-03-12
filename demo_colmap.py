@@ -110,6 +110,18 @@ def parse_args():
         default=False,
         help="Save conf-mask diagnostics JSON to <output_dir>/conf_mask_report.json.",
     )
+    parser.add_argument(
+        "--save_depth",
+        action="store_true",
+        default=False,
+        help="Save per-frame depth maps as <output_dir>/depths.npy (shape [N, H, W], VGGT normalized depth at 518x518).",
+    )
+    parser.add_argument(
+        "--save_depth_conf",
+        action="store_true",
+        default=False,
+        help="Save per-frame depth confidence maps as <output_dir>/depth_confs.npy (shape [N, H, W]).",
+    )
     return parser.parse_args()
 
 
@@ -469,6 +481,16 @@ def demo_fn(args):
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(conf_mask_report, f, indent=2)
         print(f"Saved confidence mask report to {report_path}")
+
+    if args.save_depth:
+        depth_save_path = os.path.join(sparse_reconstruction_dir, "depths.npy")
+        np.save(depth_save_path, depth_map)
+        print(f"Saved depth maps to {depth_save_path} (shape={depth_map.shape})")
+
+    if args.save_depth_conf:
+        conf_save_path = os.path.join(sparse_reconstruction_dir, "depth_confs.npy")
+        np.save(conf_save_path, depth_conf)
+        print(f"Saved depth confidence maps to {conf_save_path} (shape={depth_conf.shape})")
 
     # Save point cloud for fast visualization
     trimesh.PointCloud(points_3d, colors=points_rgb).export(os.path.join(sparse_reconstruction_dir, "points.ply"))

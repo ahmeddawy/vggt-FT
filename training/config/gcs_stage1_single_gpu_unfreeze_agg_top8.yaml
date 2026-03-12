@@ -1,0 +1,63 @@
+defaults:
+  - gcs_stage1_single_gpu
+  - _self_
+
+# Same setup as gcs_stage1_single_gpu, but partially unfreezes aggregator.
+# Trainable aggregator layers: frame_blocks[16..23], global_blocks[16..23].
+exp_name: gcs_stage1_single_gpu_unfreeze_agg_top8_lr5e5
+
+optim:
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 5e-5
+    weight_decay: 0.05
+
+  # Freeze early aggregator blocks only (recursive freeze on each module).
+  frozen_module_names:
+    - "aggregator.patch_embed"
+    - "aggregator.frame_blocks.0"
+    - "aggregator.frame_blocks.1"
+    - "aggregator.frame_blocks.2"
+    - "aggregator.frame_blocks.3"
+    - "aggregator.frame_blocks.4"
+    - "aggregator.frame_blocks.5"
+    - "aggregator.frame_blocks.6"
+    - "aggregator.frame_blocks.7"
+    - "aggregator.frame_blocks.8"
+    - "aggregator.frame_blocks.9"
+    - "aggregator.frame_blocks.10"
+    - "aggregator.frame_blocks.11"
+    - "aggregator.frame_blocks.12"
+    - "aggregator.frame_blocks.13"
+    - "aggregator.frame_blocks.14"
+    - "aggregator.frame_blocks.15"
+    - "aggregator.global_blocks.0"
+    - "aggregator.global_blocks.1"
+    - "aggregator.global_blocks.2"
+    - "aggregator.global_blocks.3"
+    - "aggregator.global_blocks.4"
+    - "aggregator.global_blocks.5"
+    - "aggregator.global_blocks.6"
+    - "aggregator.global_blocks.7"
+    - "aggregator.global_blocks.8"
+    - "aggregator.global_blocks.9"
+    - "aggregator.global_blocks.10"
+    - "aggregator.global_blocks.11"
+    - "aggregator.global_blocks.12"
+    - "aggregator.global_blocks.13"
+    - "aggregator.global_blocks.14"
+    - "aggregator.global_blocks.15"
+
+  options:
+    lr:
+      - scheduler:
+          _target_: fvcore.common.param_scheduler.CompositeParamScheduler
+          schedulers:
+            - _target_: fvcore.common.param_scheduler.LinearParamScheduler
+              start_value: 1e-8
+              end_value: 5e-5
+            - _target_: fvcore.common.param_scheduler.CosineParamScheduler
+              start_value: 5e-5
+              end_value: 1e-6
+          lengths: [0.05, 0.95]
+          interval_scaling: ['rescaled', 'rescaled']
