@@ -6,6 +6,8 @@ defaults:
 # Aggregator base weights are frozen; only LoRA adapter weights (+ heads) are trained.
 exp_name: gcs_stage1_lora_agg_8gpu_fast_r16
 
+max_img_per_gpu: 32
+
 checkpoint:
   # No aggregator-only checkpoint needed — full pretrained model is loaded inside _setup_lora().
   # Set to null to avoid loading it again (with mismatched keys) after LoRA is applied.
