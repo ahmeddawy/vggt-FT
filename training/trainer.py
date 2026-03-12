@@ -213,11 +213,18 @@ class Trainer:
         # Load optimizer state if available and in training mode
         if "optimizer" in checkpoint:
             logging.info(f"Loading optimizer state dict (rank {self.rank})")
-            self.optims.optimizer.load_state_dict(checkpoint["optimizer"])
-
+            #self.optims.optimizer.load_state_dict(checkpoint["optimizer"])
+            opt_states = checkpoint["optimizer"]
+            if not isinstance(opt_states, list):
+                opt_states = [opt_states]
+            for optim, state in zip(self.optims, opt_states):
+                optim.optimizer.load_state_dict(state)
         # Load training progress
-        if "epoch" in checkpoint:
-            self.epoch = checkpoint["epoch"]
+        #if "epoch" in checkpoint:
+        #    self.epoch = checkpoint["epoch"]
+        epoch_key = "prev_epoch" if "prev_epoch" in checkpoint else "epoch"
+        if epoch_key in checkpoint:
+            self.epoch = checkpoint[epoch_key]
         self.steps = checkpoint["steps"] if "steps" in checkpoint else {"train": 0, "val": 0}
         self.ckpt_time_elapsed = checkpoint.get("time_elapsed", 0)
 
