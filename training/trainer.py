@@ -249,8 +249,10 @@ class Trainer:
         self.gradient_clipper = instantiate(self.optim_conf.gradient_clip)
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.optim_conf.amp.enabled)
 
-        # Freeze specified model parameters if any
-        if getattr(self.optim_conf, "frozen_module_names", None):
+        # Apply LoRA to aggregator (mutually exclusive with frozen_module_names)
+        if getattr(self.optim_conf, "lora", None):
+            self._setup_lora()
+        elif getattr(self.optim_conf, "frozen_module_names", None):
             logging.info(
                 f"[Start] Freezing modules: {self.optim_conf.frozen_module_names} on rank {self.distributed_rank}"
             )
@@ -269,6 +271,37 @@ class Trainer:
             logging.info(f"Model summary saved to {model_summary_path}")
 
         logging.info("Successfully initialized training components.")
+
+    def _setup_lora(self):
+        """Loads pretrained weights into the full model, then wraps model.aggregator with LoRA via PEFT."""
+        from peft import LoraConfig, get_peft_model
+
+        lora_conf = self.optim_conf.lora
+
+        # Load full pretrained weights BEFORE wrapping so base-layer keys still match.
+        pretrained_path = getattr(lora_conf, "pretrained_checkpoint_path", None)
+        if pretrained_path is not None:
+            logging.info(f"LoRA: loading pretrained weights from {pretrained_path} (rank {self.rank})")
+            with g_pathmgr.open(pretrained_path, "rb") as f:
+                ckpt = torch.load(f, map_location="cpu")
+            state_dict = ckpt["model"] if "model" in ckpt else ckpt
+            missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
+            if self.rank == 0:
+                logging.info(f"LoRA pretrained load — missing: {missing or 'None'}, unexpected: {unexpected or 'None'}")
+
+        # Build LoRA config and wrap only the aggregator sub-module.
+        lora_config = LoraConfig(
+            r=int(lora_conf.r),
+            lora_alpha=float(lora_conf.lora_alpha),
+            target_modules=list(lora_conf.target_modules),
+            lora_dropout=float(getattr(lora_conf, "lora_dropout", 0.0)),
+            bias="none",
+        )
+        self.model.aggregator = get_peft_model(self.model.aggregator, lora_config)
+
+        if self.rank == 0:
+            logging.info("LoRA applied to model.aggregator:")
+            self.model.aggregator.print_trainable_parameters()
 
     def _setup_dataloaders(self):
         """Initializes train and validation datasets and dataloaders."""

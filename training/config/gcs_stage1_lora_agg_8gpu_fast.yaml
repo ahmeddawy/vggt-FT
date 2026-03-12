@@ -1,0 +1,33 @@
+defaults:
+  - gcs_stage1_single_gpu_frozen_agg_random_heads_8gpu_fast
+  - _self_
+
+# Experiment 1b: LoRA on aggregator, randomly initialized heads.
+# Aggregator base weights are frozen; only LoRA adapter weights (+ heads) are trained.
+exp_name: gcs_stage1_lora_agg_8gpu_fast_r16
+
+checkpoint:
+  # No aggregator-only checkpoint needed — full pretrained model is loaded inside _setup_lora().
+  # Set to null to avoid loading it again (with mismatched keys) after LoRA is applied.
+  resume_checkpoint_path: null
+  strict: False
+
+optim:
+  # frozen_module_names is NOT used here — PEFT marks all non-LoRA params as requires_grad=False.
+  frozen_module_names: null
+
+  lora:
+    # Full pretrained VGGT checkpoint — loaded BEFORE LoRA wrapping so base-layer keys match.
+    pretrained_checkpoint_path: /home/oem/Rembrand/Foundation_MC_finetune/vggt-FT/model.pt
+    # LoRA rank. r=16 is a good starting point; increase to 32 if underfitting.
+    r: 16
+    # lora_alpha controls effective LR scaling: effective_lr = lr * (lora_alpha / r).
+    # alpha=32, r=16 → scale=2 keeps adapters in a similar learning regime to r=8,alpha=16.
+    lora_alpha: 32
+    # Target the attention projection layers in every aggregator block.
+    # qkv: fused Q+K+V linear (dim → dim*3)
+    # proj: attention output projection
+    target_modules:
+      - qkv
+      - proj
+    lora_dropout: 0.0
