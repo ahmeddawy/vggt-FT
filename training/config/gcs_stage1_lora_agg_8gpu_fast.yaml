@@ -4,7 +4,7 @@ defaults:
 
 # Experiment 1b: LoRA on aggregator, randomly initialized heads.
 # Aggregator base weights are frozen; only LoRA adapter weights (+ heads) are trained.
-exp_name: gcs_stage1_lora_agg_8gpu_fast_r16
+exp_name: gcs_stage1_lora_agg_8gpu_fast_r16_lr2e4
 
 max_img_per_gpu: 32
 
