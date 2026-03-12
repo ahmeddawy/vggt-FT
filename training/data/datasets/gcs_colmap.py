@@ -496,5 +496,7 @@ class GCSColmapDataset(BaseDataset):
             "world_points": world_points,
             "point_masks": point_masks,
             "original_sizes": original_sizes,
+            "tracks": None,
+            "track_masks": None,
         }
         return batch

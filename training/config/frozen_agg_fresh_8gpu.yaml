@@ -1,5 +1,5 @@
 defaults:
-  - gcs_stage1_single_gpu_frozen_agg_random_heads
+  - frozen_agg_fresh_1gpu
   - _self_
 
 # 8-GPU throughput-oriented variant for frozen-aggregator/random-heads ablation.

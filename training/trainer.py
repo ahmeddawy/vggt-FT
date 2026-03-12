@@ -285,6 +285,11 @@ class Trainer:
             with g_pathmgr.open(pretrained_path, "rb") as f:
                 ckpt = torch.load(f, map_location="cpu")
             state_dict = ckpt["model"] if "model" in ckpt else ckpt
+            if getattr(lora_conf, "fresh_heads", False):
+                # Only restore aggregator weights — heads keep random init.
+                state_dict = {k: v for k, v in state_dict.items() if k.startswith("aggregator.")}
+                if self.rank == 0:
+                    logging.info("LoRA: fresh_heads=True — loading aggregator weights only, heads stay randomly initialized.")
             missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
             if self.rank == 0:
                 logging.info(f"LoRA pretrained load — missing: {missing or 'None'}, unexpected: {unexpected or 'None'}")
@@ -776,7 +781,10 @@ class Trainer:
             A dictionary containing the computed losses.
         """
         # Forward pass
-        y_hat = model(images=batch["images"])
+        query_points = None
+        if batch.get("tracks") is not None:
+            query_points = batch["tracks"][:, 0, :, :]  # (B, N, 2) first frame
+        y_hat = model(images=batch["images"], query_points=query_points)
         
         # Loss computation
         loss_dict = self.loss(y_hat, batch)

@@ -1,0 +1,115 @@
+defaults:
+  - frozen_agg_fresh_8gpu
+  - _self_
+
+# Experiment 1b: LoRA on aggregator, randomly initialized heads.
+# Aggregator base weights are frozen; only LoRA adapter weights (+ heads) are trained.
+exp_name: gcs_stage1_lora_agg_8gpu_fast_r16_track
+
+max_img_per_gpu: 32
+
+model:
+  enable_track: True
+
+data:
+  train:
+    common_config:
+      load_track: True
+      track_num: 1024
+  val:
+    common_config:
+      load_track: True
+      track_num: 1024
+
+loss:
+  track:
+    weight: 1.0
+
+checkpoint:
+  # No aggregator-only checkpoint needed — full pretrained model is loaded inside _setup_lora().
+  # Set to null to avoid loading it again (with mismatched keys) after LoRA is applied.
+  resume_checkpoint_path: null
+  strict: False
+
+optim:
+  optimizer:
+    lr: 2e-4
+  gradient_clip:
+    _target_: train_utils.gradient_clip.GradientClipper
+    configs:
+      - module_name: ["aggregator"]
+        max_norm: 1.0
+        norm_type: 2
+      - module_name: ["depth"]
+        max_norm: 1.0
+        norm_type: 2
+      - module_name: ["camera"]
+        max_norm: 1.0
+        norm_type: 2
+      - module_name: ["point"]
+        max_norm: 0.5   # tighter guard — point head unstable with inv_log activation
+        norm_type: 2
+      - module_name: ["track"]
+        max_norm: 0.5   # tighter guard — fresh track head
+        norm_type: 2
+  # frozen_module_names is NOT used here — PEFT marks all non-LoRA params as requires_grad=False.
+  frozen_module_names: null
+
+  lora:
+    # Full pretrained VGGT checkpoint — loaded BEFORE LoRA wrapping so base-layer keys match.
+    pretrained_checkpoint_path: /home/oem/Rembrand/Foundation_MC_finetune/vggt-FT/model.pt
+    # LoRA rank. r=16 is a good starting point; increase to 32 if underfitting.
+    r: 16
+    # lora_alpha controls effective LR scaling: effective_lr = lr * (lora_alpha / r).
+    # alpha=32, r=16 → scale=2 keeps adapters in a similar learning regime to r=8,alpha=16.
+    lora_alpha: 32
+    # Target the attention projection layers in every aggregator block.
+    # qkv: fused Q+K+V linear (dim → dim*3)
+    # proj: attention output projection
+    target_modules:
+      - qkv
+      - proj
+    lora_dropout: 0.0
+    # fresh_heads: if true, only aggregator weights are loaded from pretrained_checkpoint_path.
+    # Heads (camera, depth, point, track) keep random initialization.
+    # Set to true to ablate: LoRA aggregator + fresh heads vs frozen aggregator + fresh heads.
+    fresh_heads: true
+
+logging:
+  scalar_keys_to_log:
+    train:
+      keys_to_log:
+        - loss_objective
+        - loss_camera
+        - loss_T
+        - loss_R
+        - loss_FL
+        - loss_conf_depth
+        - loss_reg_depth
+        - loss_grad_depth
+        - loss_mask_conf_depth
+        - loss_conf_point
+        - loss_reg_point
+        - loss_grad_point
+        - loss_mask_conf_point
+        - loss_track
+        - loss_vis_track
+        - loss_conf_track
+    val:
+      keys_to_log:
+        - loss_objective
+        - loss_camera
+        - loss_T
+        - loss_R
+        - loss_FL
+        - loss_conf_depth
+        - loss_reg_depth
+        - loss_grad_depth
+        - loss_mask_conf_depth
+        - loss_conf_point
+        - loss_reg_point
+        - loss_grad_point
+        - loss_mask_conf_point
+        - loss_track
+        - loss_vis_track
+        - loss_conf_track

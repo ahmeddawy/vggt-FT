@@ -1,5 +1,5 @@
 defaults:
-  - gcs_stage1_single_gpu
+  - frozen_agg_pretrained_1gpu_50ep
   - _self_
 
 # 8-GPU throughput-oriented variant (keeps training behavior close, reduces overhead).

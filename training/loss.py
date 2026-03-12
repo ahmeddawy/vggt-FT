@@ -79,9 +79,51 @@ class MultitaskLoss(torch.nn.Module):
             total_loss = total_loss + point_loss
             loss_dict.update(point_loss_dict)
 
-        # Tracking loss - not cleaned yet, dirty code is at the bottom of this file
-        if "track" in predictions:
-            raise NotImplementedError("Track loss is not cleaned up yet")
+        # Tracking loss
+        if "track" in predictions and self.track is not None:
+            coord_preds = predictions["track"]   # list of (B, S, N, 2)
+            vis_scores = predictions["vis"]       # (B, S, N)
+            conf_scores = predictions.get("conf", None)
+
+            gt_tracks = batch["tracks"]           # (B, S, N, 2)
+            gt_track_vis_mask = batch["track_vis_mask"]  # (B, S, N)
+
+            n = coord_preds[-1].shape[2]
+            gt_tracks = gt_tracks[:, :, :n]
+            gt_tracks = check_and_fix_inf_nan(gt_tracks, "gt_tracks", hard_max=None)
+            gt_track_vis_mask = gt_track_vis_mask[:, :, :n]
+
+            valids = torch.ones_like(gt_track_vis_mask)
+            valids = valids * gt_track_vis_mask[:, 0, :].unsqueeze(1)
+
+            if valids.any():
+                track_loss = sequence_loss(
+                    flow_preds=coord_preds,
+                    flow_gt=gt_tracks,
+                    vis=gt_track_vis_mask,
+                    valids=valids,
+                )
+                vis_loss = F.binary_cross_entropy_with_logits(
+                    vis_scores[valids.bool()],
+                    gt_track_vis_mask[valids.bool()].float(),
+                )
+                vis_loss = check_and_fix_inf_nan(vis_loss, "vis_loss", hard_max=None)
+
+                if conf_scores is not None:
+                    gt_conf_mask = (gt_tracks - coord_preds[-1]).norm(dim=-1) < 3
+                    conf_loss = F.binary_cross_entropy_with_logits(
+                        conf_scores[valids.bool()],
+                        gt_conf_mask[valids.bool()].float(),
+                    )
+                    conf_loss = check_and_fix_inf_nan(conf_loss, "conf_loss", hard_max=None)
+                else:
+                    conf_loss = torch.zeros(1, device=vis_scores.device)
+
+                track_total = (track_loss + vis_loss + conf_loss) * self.track["weight"]
+                total_loss = total_loss + track_total
+                loss_dict["loss_track"] = track_loss
+                loss_dict["loss_vis_track"] = vis_loss
+                loss_dict["loss_conf_track"] = conf_loss
         
         loss_dict["loss_objective"] = total_loss
 
@@ -761,7 +803,7 @@ def torch_quantile(
 ########################################################################################
 ########################################################################################
 
-'''
+"""
 def _compute_losses(self, coord_preds, vis_scores, conf_scores, batch):
     """Compute tracking losses using sequence_loss"""
     gt_tracks = batch["tracks"]  # B, S, N, 2
@@ -819,7 +861,7 @@ def _compute_losses(self, coord_preds, vis_scores, conf_scores, batch):
         conf_loss = 0
 
     return track_loss, vis_loss, conf_loss
-
+"""
 
 
 def reduce_masked_mean(x, mask, dim=None, keepdim=False):
@@ -882,5 +924,4 @@ def sequence_loss(flow_preds, flow_gt, vis, valids, gamma=0.8, vis_aware=False, 
         flow_loss = flow_loss / n_predictions
 
     return flow_loss
-'''
 
