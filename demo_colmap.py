@@ -113,8 +113,8 @@ def parse_args():
     parser.add_argument(
         "--save_depth",
         action="store_true",
-        default=False,
-        help="Save per-frame depth maps as <output_dir>/depths.npy (shape [N, H, W], VGGT normalized depth at 518x518).",
+        default=True,
+        help="Save per-frame depth maps as <output_dir>/depths.npy (indexed by frame number, shape [max_frame+1, H, W]).",
     )
     parser.add_argument(
         "--save_depth_conf",
@@ -483,9 +483,22 @@ def demo_fn(args):
         print(f"Saved confidence mask report to {report_path}")
 
     if args.save_depth:
+        # Build frame-number-indexed array: depths[frame_idx] = depth for frame_XXXXXX.jpg
+        # This matches depth_eval.py which indexes by the number extracted from the filename.
+        frame_nums = []
+        for p in image_path_list:
+            m = re.search(r"(\d+)$", Path(p).stem)
+            frame_nums.append(int(m.group(1)) if m else None)
+        valid_nums = [n for n in frame_nums if n is not None]
+        max_frame = max(valid_nums) if valid_nums else len(frame_nums) - 1
+        H_d, W_d = depth_map.shape[1], depth_map.shape[2]
+        depth_indexed = np.zeros((max_frame + 1, H_d, W_d), dtype=depth_map.dtype)
+        for i, fn in enumerate(frame_nums):
+            if fn is not None:
+                depth_indexed[fn] = depth_map[i]
         depth_save_path = os.path.join(sparse_reconstruction_dir, "depths.npy")
-        np.save(depth_save_path, depth_map)
-        print(f"Saved depth maps to {depth_save_path} (shape={depth_map.shape})")
+        np.save(depth_save_path, depth_indexed)
+        print(f"Saved depth maps to {depth_save_path} (shape={depth_indexed.shape})")
 
     if args.save_depth_conf:
         conf_save_path = os.path.join(sparse_reconstruction_dir, "depth_confs.npy")
