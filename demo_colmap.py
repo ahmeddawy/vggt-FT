@@ -491,11 +491,13 @@ def demo_fn(args):
             frame_nums.append(int(m.group(1)) if m else None)
         valid_nums = [n for n in frame_nums if n is not None]
         max_frame = max(valid_nums) if valid_nums else len(frame_nums) - 1
-        H_d, W_d = depth_map.shape[1], depth_map.shape[2]
-        depth_indexed = np.zeros((max_frame + 1, H_d, W_d), dtype=depth_map.dtype)
+        # Squeeze trailing channel dim if present: (N, H, W, 1) -> (N, H, W)
+        dm = depth_map.squeeze(-1) if depth_map.ndim == 4 else depth_map
+        H_d, W_d = dm.shape[1], dm.shape[2]
+        depth_indexed = np.zeros((max_frame + 1, H_d, W_d), dtype=dm.dtype)
         for i, fn in enumerate(frame_nums):
             if fn is not None:
-                depth_indexed[fn] = depth_map[i]
+                depth_indexed[fn] = dm[i]
         depth_save_path = os.path.join(sparse_reconstruction_dir, "depths.npy")
         np.save(depth_save_path, depth_indexed)
         print(f"Saved depth maps to {depth_save_path} (shape={depth_indexed.shape})")
