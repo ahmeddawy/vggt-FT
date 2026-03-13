@@ -93,6 +93,9 @@ done < <(find "$DATASET_DIR" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
 
 echo "Found ${#SEQUENCES[@]} sequences."
 
+# Failed sequences accumulator (global)
+FAILED_SEQS=()
+
 # --------------------------------------------------------------------------
 # Helper: run inference for one (sequence, checkpoint, tag)
 # --------------------------------------------------------------------------
@@ -112,12 +115,27 @@ run_inference() {
 
     echo "  [RUN]  ${tag}/${seq} ..."
     mkdir -p "$out_dir"
+
+    local log_file="${out_dir}/inference.log"
+    set +e
     python "${SCRIPT_DIR}/demo_colmap.py" \
         --scene_dir  "$scene_dir" \
         --output_dir "$out_dir"  \
         --checkpoint "$ckpt"     \
         --save_depth             \
-        2>&1 | tail -5
+        > "$log_file" 2>&1
+    local exit_code=$?
+    set -e
+
+    if [[ $exit_code -ne 0 ]]; then
+        local err_line
+        err_line=$(grep -i "error\|oom\|out of memory\|killed" "$log_file" | tail -1 || true)
+        echo "  [FAIL] ${tag}/${seq} — exit code ${exit_code}: ${err_line}"
+        FAILED_SEQS+=("${tag}/${seq}")
+        return 0
+    fi
+
+    tail -3 "$log_file"
     echo "  [DONE] ${tag}/${seq}"
 }
 
@@ -220,4 +238,12 @@ echo "============================================================"
 echo " Done. Results in: $OUTPUT_DIR"
 echo "  camera_eval_train.json, camera_eval_test.json, camera_eval_all.json"
 echo "  depth_eval_train.json,  depth_eval_test.json,  depth_eval_all.json"
+if [[ ${#FAILED_SEQS[@]} -gt 0 ]]; then
+    echo ""
+    echo "  WARNING: ${#FAILED_SEQS[@]} sequence(s) failed (OOM or error):"
+    for s in "${FAILED_SEQS[@]}"; do
+        echo "    - $s"
+    done
+    echo "  Re-run with --skip-inference to retry only failed ones after freeing memory."
+fi
 echo "============================================================"
