@@ -4,10 +4,9 @@ defaults:
 
 # Experiment 1b: LoRA on aggregator, randomly initialized heads.
 # Aggregator base weights are frozen; only LoRA adapter weights (+ heads) are trained.
-exp_name: gcs_stage1_lora_agg_8gpu_fast_r16_lr2e4
-
-max_img_per_gpu: 32
-
+exp_name: gcs_stage1_lora_agg_8gpu_fast_r32_accum2_lr2e4
+max_img_per_gpu: 44
+accum_steps: 2
 checkpoint:
   # No aggregator-only checkpoint needed — full pretrained model is loaded inside _setup_lora().
   # Set to null to avoid loading it again (with mismatched keys) after LoRA is applied.
@@ -22,7 +21,7 @@ optim:
     # Full pretrained VGGT checkpoint — loaded BEFORE LoRA wrapping so base-layer keys match.
     pretrained_checkpoint_path: /workspace/vggt-FT/model.pt
     # LoRA rank. r=16 is a good starting point; increase to 32 if underfitting.
-    r: 16
+    r: 32
     # lora_alpha controls effective LR scaling: effective_lr = lr * (lora_alpha / r).
     # alpha=32, r=16 → scale=2 keeps adapters in a similar learning regime to r=8,alpha=16.
     lora_alpha: 32

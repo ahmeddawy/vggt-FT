@@ -4,10 +4,11 @@ defaults:
 
 # 8-GPU throughput-oriented variant for frozen-aggregator/random-heads ablation.
 exp_name: gcs_stage1_frozen_agg_random_heads_8gpu_fast_lr8e4
-max_img_per_gpu: 36
+max_img_per_gpu: 32
 val_epoch_freq: 2
 limit_train_batches: 200
 limit_val_batches: 50
+accum_steps: 2
 
 data:
   train:
