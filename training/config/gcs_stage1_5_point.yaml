@@ -18,6 +18,7 @@ data:
     _target_: data.dynamic_dataloader.DynamicTorchDataset
     num_workers: ${num_workers}
     max_img_per_gpu: ${max_img_per_gpu}
+    accum_steps: ${accum_steps}
     common_config:
       img_size: ${img_size}
       patch_size: ${patch_size}
@@ -38,6 +39,7 @@ data:
     _target_: data.dynamic_dataloader.DynamicTorchDataset
     num_workers: ${num_workers}
     max_img_per_gpu: ${max_img_per_gpu}
+    accum_steps: ${accum_steps}
     common_config:
       img_size: ${img_size}
       patch_size: ${patch_size}
