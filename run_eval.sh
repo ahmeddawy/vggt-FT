@@ -120,7 +120,7 @@ run_inference() {
     echo "  [RUN]  ${tag}/${seq} ..."
     mkdir -p "$out_dir"
 
-    local use_lora="$4"  # optional: "1" to add --lora flag
+    local use_lora="${4:-}"  # optional: "1" to add --lora flag
 
     local log_file="${out_dir}/inference.log"
     set +e
