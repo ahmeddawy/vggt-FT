@@ -32,6 +32,8 @@ DATASET_DIR="${SCRIPT_DIR}/dataset"
 OUTPUT_DIR="${SCRIPT_DIR}/eval_outputs"
 VANILLA_TAG="vanilla"
 FINETUNED_TAG="finetuned"
+VANILLA_DIR=""        # if set, skip vanilla inference and use this dir as vanilla root
+FINETUNED_LORA=0     # if 1, pass --lora flag to demo_colmap.py for finetuned inference
 SKIP_INFERENCE=0
 
 # --------------------------------------------------------------------------
@@ -45,6 +47,8 @@ while [[ $# -gt 0 ]]; do
         --output-dir)     OUTPUT_DIR="$2";     shift 2 ;;
         --vanilla-tag)    VANILLA_TAG="$2";    shift 2 ;;
         --finetuned-tag)  FINETUNED_TAG="$2";  shift 2 ;;
+        --vanilla-dir)    VANILLA_DIR="$2";    shift 2 ;;
+        --finetuned-lora) FINETUNED_LORA=1;    shift   ;;
         --skip-inference) SKIP_INFERENCE=1;    shift   ;;
         *) echo "[ERROR] Unknown argument: $1"; exit 1 ;;
     esac
@@ -116,6 +120,8 @@ run_inference() {
     echo "  [RUN]  ${tag}/${seq} ..."
     mkdir -p "$out_dir"
 
+    local use_lora="$4"  # optional: "1" to add --lora flag
+
     local log_file="${out_dir}/inference.log"
     set +e
     python "${SCRIPT_DIR}/demo_colmap.py" \
@@ -123,6 +129,7 @@ run_inference() {
         --output_dir "$out_dir"  \
         --checkpoint "$ckpt"     \
         --save_depth             \
+        ${use_lora:+--lora}      \
         > "$log_file" 2>&1
     local exit_code=$?
     set -e
@@ -143,22 +150,26 @@ run_inference() {
 # Inference loop
 # --------------------------------------------------------------------------
 if [[ "$SKIP_INFERENCE" -eq 0 ]]; then
-    echo ""
-    echo "--- Inference: ${VANILLA_TAG} ---"
-    for seq in "${SEQUENCES[@]}"; do
-        run_inference "$seq" "$VANILLA_CKPT" "$VANILLA_TAG"
-    done
+    if [[ -n "$VANILLA_DIR" ]]; then
+        echo "[INFO] Reusing existing vanilla outputs from: $VANILLA_DIR"
+    else
+        echo ""
+        echo "--- Inference: ${VANILLA_TAG} ---"
+        for seq in "${SEQUENCES[@]}"; do
+            run_inference "$seq" "$VANILLA_CKPT" "$VANILLA_TAG"
+        done
+    fi
 
     echo ""
     echo "--- Inference: ${FINETUNED_TAG} ---"
     for seq in "${SEQUENCES[@]}"; do
-        run_inference "$seq" "$FINETUNED_CKPT" "$FINETUNED_TAG"
+        run_inference "$seq" "$FINETUNED_CKPT" "$FINETUNED_TAG" "${FINETUNED_LORA}"
     done
 else
     echo "[INFO] Skipping inference (--skip-inference set)."
 fi
 
-VANILLA_ROOT="${OUTPUT_DIR}/${VANILLA_TAG}"
+VANILLA_ROOT="${VANILLA_DIR:-${OUTPUT_DIR}/${VANILLA_TAG}}"
 FINETUNED_ROOT="${OUTPUT_DIR}/${FINETUNED_TAG}"
 
 # --------------------------------------------------------------------------

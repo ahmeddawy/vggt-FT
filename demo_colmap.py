@@ -122,6 +122,18 @@ def parse_args():
         default=False,
         help="Save per-frame depth confidence maps as <output_dir>/depth_confs.npy (shape [N, H, W]).",
     )
+    ######### LoRA parameters #########
+    parser.add_argument(
+        "--lora",
+        action="store_true",
+        default=False,
+        help="Load checkpoint as a LoRA model (aggregator wrapped with PEFT LoRA).",
+    )
+    parser.add_argument("--lora_r",            type=int,   default=16,       help="LoRA rank.")
+    parser.add_argument("--lora_alpha",        type=float, default=32.0,     help="LoRA alpha.")
+    parser.add_argument("--lora_target_modules", type=str, default="qkv,proj",
+                        help="Comma-separated list of LoRA target module names.")
+    parser.add_argument("--lora_dropout",      type=float, default=0.0,      help="LoRA dropout.")
     return parser.parse_args()
 
 
@@ -298,6 +310,21 @@ def demo_fn(args):
     ckpt_path = Path(args.checkpoint)
     if not ckpt_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+
+    if args.lora:
+        # Wrap aggregator with PEFT LoRA before loading state dict so keys match.
+        from peft import LoraConfig, get_peft_model
+        lora_config = LoraConfig(
+            r=args.lora_r,
+            lora_alpha=args.lora_alpha,
+            target_modules=args.lora_target_modules.split(","),
+            lora_dropout=args.lora_dropout,
+            bias="none",
+        )
+        model.aggregator = get_peft_model(model.aggregator, lora_config)
+        print(f"LoRA applied to aggregator (r={args.lora_r}, alpha={args.lora_alpha}, "
+              f"targets={args.lora_target_modules})")
+
     ckpt = torch.load(str(ckpt_path), map_location="cpu")
     state = ckpt["model"] if "model" in ckpt else ckpt
     model.load_state_dict(state, strict=False)
