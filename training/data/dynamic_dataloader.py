@@ -28,6 +28,7 @@ class DynamicTorchDataset(ABC):
         persistent_workers: bool = False,
         seed: int = 42,
         max_img_per_gpu: int = 48,
+        accum_steps: int = 1,
     ) -> None:
         self.dataset_config = dataset
         self.common_config = common_config
@@ -54,14 +55,16 @@ class DynamicTorchDataset(ABC):
         if len(self.image_num_range) != 2 or self.image_num_range[0] < 1 or self.image_num_range[0] > self.image_num_range[1]:
             raise ValueError(f"image_num_range must be [min, max] with 1 <= min <= max, got {self.image_num_range}")
 
-        # Create samplers
+        # Create samplers. Multiply max_img_per_gpu by accum_steps so the DataLoader
+        # produces batches large enough to be split into accum_steps non-empty chunks.
+        # Each chunk will then contain at most max_img_per_gpu images per forward pass.
         self.sampler = DynamicDistributedSampler(self.dataset, seed=seed, shuffle=shuffle)
         self.batch_sampler = DynamicBatchSampler(
             self.sampler,
             self.aspect_ratio_range,
             self.image_num_range,
             seed=seed,
-            max_img_per_gpu=max_img_per_gpu
+            max_img_per_gpu=max_img_per_gpu * accum_steps
         )
 
     def get_loader(self, epoch):
