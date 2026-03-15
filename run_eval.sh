@@ -35,6 +35,9 @@ FINETUNED_TAG="finetuned"
 VANILLA_DIR=""        # if set, skip vanilla inference and use this dir as vanilla root
 FINETUNED_LORA=0     # if 1, pass --lora flag to demo_colmap.py for finetuned inference
 SKIP_INFERENCE=0
+IGNORE_MASKS=0        # if 1, pass --ignore_masks to demo_colmap.py
+CONF_THRES=5.0        # confidence threshold for point cloud (default 5.0)
+SAVE_DEPTH_CONF=0     # if 1, save depth confidence maps
 
 # --------------------------------------------------------------------------
 # Argument parsing
@@ -50,6 +53,9 @@ while [[ $# -gt 0 ]]; do
         --vanilla-dir)    VANILLA_DIR="$2";    shift 2 ;;
         --finetuned-lora) FINETUNED_LORA=1;    shift   ;;
         --skip-inference) SKIP_INFERENCE=1;    shift   ;;
+        --ignore-masks)   IGNORE_MASKS=1;      shift   ;;
+        --conf-thres)     CONF_THRES="$2";     shift 2 ;;
+        --save-depth-conf) SAVE_DEPTH_CONF=1;  shift   ;;
         *) echo "[ERROR] Unknown argument: $1"; exit 1 ;;
     esac
 done
@@ -83,6 +89,9 @@ echo "  output dir    : $OUTPUT_DIR"
 echo "  vanilla tag   : $VANILLA_TAG"
 echo "  finetuned tag : $FINETUNED_TAG"
 echo "  skip inference: $SKIP_INFERENCE"
+echo "  ignore masks  : $IGNORE_MASKS"
+echo "  conf threshold: $CONF_THRES"
+echo "  save depth conf: $SAVE_DEPTH_CONF"
 echo "============================================================"
 
 # --------------------------------------------------------------------------
@@ -123,13 +132,19 @@ run_inference() {
     local use_lora="${4:-}"  # optional: "1" to add --lora flag
 
     local log_file="${out_dir}/inference.log"
+    local extra_flags=""
+    [[ "$IGNORE_MASKS"    == "1" ]] && extra_flags+=" --ignore_masks"
+    [[ "$SAVE_DEPTH_CONF" == "1" ]] && extra_flags+=" --save_depth_conf"
+    [[ -n "$use_lora"             ]] && extra_flags+=" --lora"
+
     set +e
     python "${SCRIPT_DIR}/demo_colmap.py" \
-        --scene_dir  "$scene_dir" \
-        --output_dir "$out_dir"  \
-        --checkpoint "$ckpt"     \
-        --save_depth             \
-        ${use_lora:+--lora}      \
+        --scene_dir        "$scene_dir"  \
+        --output_dir       "$out_dir"    \
+        --checkpoint       "$ckpt"       \
+        --save_depth                     \
+        --conf_thres_value "$CONF_THRES" \
+        $extra_flags                     \
         > "$log_file" 2>&1
     local exit_code=$?
     set -e
